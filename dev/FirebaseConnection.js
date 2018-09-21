@@ -1,5 +1,9 @@
 function FirebaseConnection(connection, connectCallback) {
-    connection.firebase = connection.firebase || 'webrtc-experiment';
+    function isData(session) {
+        return !session.audio && !session.video && !session.screen && session.data;
+    }
+
+    connection.firebase = connection.firebase || 'webrtc';
     var channelId = connection.channel;
 
     connection.socket = new Firebase('https://' + connection.firebase + '.firebaseio.com/' + channelId);
@@ -35,11 +39,11 @@ function FirebaseConnection(connection, connectCallback) {
     function onMessagesCallback(message) {
         if (message.remoteUserId != connection.userid) return;
 
-        if (connection.peers[message.sender] && connection.peers[message.sender].extra != message.extra) {
-            connection.peers[message.sender].extra = message.extra;
+        if (connection.peers[message.sender] && connection.peers[message.sender].extra != message.message.extra) {
+            connection.peers[message.sender].extra = message.message.extra;
             connection.onExtraDataUpdated({
                 userid: message.sender,
-                extra: message.extra
+                extra: message.message.extra
             });
         }
 
@@ -136,7 +140,7 @@ function FirebaseConnection(connection, connectCallback) {
             }
 
             var userPreferences = {
-                extra: message.extra || {},
+                extra: message.message.extra || {},
                 localPeerSdpConstraints: message.message.remotePeerSdpConstraints || {
                     OfferToReceiveAudio: connection.sdpConstraints.mandatory.OfferToReceiveAudio,
                     OfferToReceiveVideo: connection.sdpConstraints.mandatory.OfferToReceiveVideo

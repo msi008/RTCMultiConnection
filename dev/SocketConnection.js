@@ -2,23 +2,55 @@ function SocketConnection(connection, connectCallback) {
     var parameters = '';
 
     parameters += '?userid=' + connection.userid;
+    parameters += '&sessionid=' + connection.sessionid;
     parameters += '&msgEvent=' + connection.socketMessageEvent;
     parameters += '&socketCustomEvent=' + connection.socketCustomEvent;
+    parameters += '&autoCloseEntireSession=' + !!connection.autoCloseEntireSession;
+
+    if (connection.session.broadcast === true) {
+        parameters += '&oneToMany=true';
+    }
+
+    parameters += '&maxParticipantsAllowed=' + connection.maxParticipantsAllowed;
 
     if (connection.enableScalableBroadcast) {
         parameters += '&enableScalableBroadcast=true';
         parameters += '&maxRelayLimitPerUser=' + (connection.maxRelayLimitPerUser || 2);
     }
 
+    if (connection.socketCustomParameters) {
+        parameters += connection.socketCustomParameters;
+    }
+
     try {
         io.sockets = {};
     } catch (e) {};
 
-    try {
-        connection.socket = io((connection.socketURL || '/') + parameters);
-    } catch (e) {
-        connection.socket = io.connect((connection.socketURL || '/') + parameters, connection.socketOptions);
+    if (!connection.socketURL) {
+        connection.socketURL = '/';
     }
+
+    if (connection.socketURL.substr(connection.socketURL.length - 1, 1) != '/') {
+        // connection.socketURL = 'https://domain.com:9001/';
+        throw '"socketURL" MUST end with a slash.';
+    }
+
+    if (connection.enableLogs) {
+        if (connection.socketURL == '/') {
+            console.info('socket.io is connected at: ', location.origin + '/');
+        } else {
+            console.info('socket.io is connected at: ', connection.socketURL);
+        }
+    }
+
+    try {
+        connection.socket = io(connection.socketURL + parameters);
+    } catch (e) {
+        connection.socket = io.connect(connection.socketURL + parameters, connection.socketOptions);
+    }
+
+    // detect signaling medium
+    connection.socket.isIO = true;
 
     var mPeer = connection.multiPeersHandler;
 
@@ -30,17 +62,32 @@ function SocketConnection(connection, connectCallback) {
             userid: remoteUserId,
             extra: extra
         });
+
+        if (!connection.peersBackup[remoteUserId]) {
+            connection.peersBackup[remoteUserId] = {
+                userid: remoteUserId,
+                extra: {}
+            };
+        }
+
+        connection.peersBackup[remoteUserId].extra = extra;
     });
 
-    connection.socket.on(connection.socketMessageEvent, function(message) {
+    function onMessageEvent(message) {
         if (message.remoteUserId != connection.userid) return;
 
-        if (connection.peers[message.sender] && connection.peers[message.sender].extra != message.extra) {
+        if (connection.peers[message.sender] && connection.peers[message.sender].extra != message.message.extra) {
             connection.peers[message.sender].extra = message.extra;
             connection.onExtraDataUpdated({
                 userid: message.sender,
                 extra: message.extra
             });
+        }
+
+        if (message.message === 'next-possible-initiator') {
+            if (connection.nextPossibleInitiatorIfThisUserLeave) return;
+            connection.nextPossibleInitiatorIfThisUserLeave = message.sender;
+            return;
         }
 
         if (message.message.streamSyncNeeded && connection.peers[message.sender]) {
@@ -51,13 +98,19 @@ function SocketConnection(connection, connectCallback) {
 
             var action = message.message.action;
 
-            if (action === 'ended' || action === 'stream-removed') {
+            if (action === 'ended' || action === 'inactive' || action === 'stream-removed') {
+                if (connection.peersBackup[stream.userid]) {
+                    stream.extra = connection.peersBackup[stream.userid].extra;
+                }
                 connection.onstreamended(stream);
                 return;
             }
 
             var type = message.message.type != 'both' ? message.message.type : null;
-            stream.stream[action](type);
+
+            if (typeof stream.stream[action] == 'function') {
+                stream.stream[action](type);
+            }
             return;
         }
 
@@ -127,6 +180,19 @@ function SocketConnection(connection, connectCallback) {
         }
 
         if (message.message.readyForOffer || message.message.addMeAsBroadcaster) {
+            if (connection.attachStreams.length) {
+                connection.waitingForLocalMedia = false;
+            }
+
+            if (connection.waitingForLocalMedia) {
+                // if someone is waiting to join you
+                // make sure that we've local media before making a handshake
+                setTimeout(function() {
+                    onMessageEvent(message);
+                }, 1000);
+                return;
+            }
+
             connection.addNewBroadcaster(message.sender);
         }
 
@@ -189,7 +255,9 @@ function SocketConnection(connection, connectCallback) {
         }
 
         mPeer.addNegotiatedMessage(message.message, message.sender);
-    });
+    }
+
+    connection.socket.on(connection.socketMessageEvent, onMessageEvent);
 
     connection.socket.on('user-left', function(userid) {
         onUserLeft(userid);
@@ -200,36 +268,51 @@ function SocketConnection(connection, connectCallback) {
             extra: connection.peers[userid] ? connection.peers[userid].extra || {} : {}
         });
 
-        connection.onleave({
+        var eventObject = {
             userid: userid,
             extra: {}
-        });
+        };
+
+        if (connection.peersBackup[eventObject.userid]) {
+            eventObject.extra = connection.peersBackup[eventObject.userid].extra;
+        }
+
+        connection.onleave(eventObject);
+
+        if (connection.nextPossibleInitiatorIfThisUserLeave === userid) {
+            connection.nextPossibleInitiatorIfThisUserLeave = null;
+            connection.open(connection.sessionid);
+        }
     });
 
+    var alreadyConnected = false;
+
+    connection.socket.resetProps = function() {
+        alreadyConnected = false;
+    };
+
     connection.socket.on('connect', function() {
-        if (!connection.socketAutoReConnect) {
-            connection.socket = null;
+        if (alreadyConnected) {
             return;
         }
+        alreadyConnected = true;
 
         if (connection.enableLogs) {
             console.info('socket.io connection is opened.');
         }
 
-        connection.socket.emit('extra-data-updated', connection.extra);
+        setTimeout(function() {
+            connection.socket.emit('extra-data-updated', connection.extra);
 
-        if (connectCallback) connectCallback(connection.socket);
+            if (connectCallback) {
+                connectCallback(connection.socket);
+            }
+        }, 1000);
     });
 
     connection.socket.on('disconnect', function() {
-        if (!connection.socketAutoReConnect) {
-            connection.socket = null;
-            return;
-        }
-
         if (connection.enableLogs) {
-            console.info('socket.io connection is closed');
-            console.warn('socket.io reconnecting');
+            console.warn('socket.io connection is closed');
         }
     });
 
@@ -290,5 +373,21 @@ function SocketConnection(connection, connectCallback) {
     connection.socket.on('logs', function(log) {
         if (!connection.enableLogs) return;
         console.debug('server-logs', log);
+    });
+
+    connection.socket.on('number-of-broadcast-viewers-updated', function(data) {
+        connection.onNumberOfBroadcastViewersUpdated(data);
+    });
+
+    connection.socket.on('room-full', function(roomid) {
+        connection.onRoomFull(roomid);
+    });
+
+    connection.socket.on('become-next-modrator', function(sessionid) {
+        if (sessionid != connection.sessionid) return;
+        setTimeout(function() {
+            connection.open(sessionid);
+            connection.socket.emit('shift-moderator-control-on-disconnect');
+        }, 1000);
     });
 }

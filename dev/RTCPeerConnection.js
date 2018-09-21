@@ -3,24 +3,27 @@
 var defaults = {};
 
 function setSdpConstraints(config) {
-    var sdpConstraints;
-
-    var sdpConstraints_mandatory = {
+    var sdpConstraints = {
         OfferToReceiveAudio: !!config.OfferToReceiveAudio,
         OfferToReceiveVideo: !!config.OfferToReceiveVideo
     };
 
-    sdpConstraints = {
-        mandatory: sdpConstraints_mandatory,
-        optional: [{
-            VoiceActivityDetection: false
-        }]
-    };
+    var oldBrowser = !window.enableAdapter;
 
-    if (!!navigator.mozGetUserMedia && firefoxVersion > 34) {
+    if (DetectRTC.browser.name === 'Chrome' && DetectRTC.browser.version >= 60) {
+        // oldBrowser = false;
+    }
+
+    if (DetectRTC.browser.name === 'Firefox' && DetectRTC.browser.version >= 54) {
+        oldBrowser = false;
+    }
+
+    if (oldBrowser) {
         sdpConstraints = {
-            OfferToReceiveAudio: !!config.OfferToReceiveAudio,
-            OfferToReceiveVideo: !!config.OfferToReceiveVideo
+            mandatory: sdpConstraints,
+            optional: [{
+                VoiceActivityDetection: false
+            }]
         };
     }
 
@@ -28,30 +31,31 @@ function setSdpConstraints(config) {
 }
 
 var RTCPeerConnection;
-if (typeof mozRTCPeerConnection !== 'undefined') {
+if (typeof window.RTCPeerConnection !== 'undefined') {
+    RTCPeerConnection = window.RTCPeerConnection;
+} else if (typeof mozRTCPeerConnection !== 'undefined') {
     RTCPeerConnection = mozRTCPeerConnection;
 } else if (typeof webkitRTCPeerConnection !== 'undefined') {
     RTCPeerConnection = webkitRTCPeerConnection;
-} else if (typeof window.RTCPeerConnection !== 'undefined') {
-    RTCPeerConnection = window.RTCPeerConnection;
 }
 
 var RTCSessionDescription = window.RTCSessionDescription || window.mozRTCSessionDescription;
 var RTCIceCandidate = window.RTCIceCandidate || window.mozRTCIceCandidate;
 var MediaStreamTrack = window.MediaStreamTrack;
 
-window.onPluginRTCInitialized = function() {
-    MediaStreamTrack = window.PluginRTC.MediaStreamTrack;
-    RTCPeerConnection = window.PluginRTC.RTCPeerConnection;
-    RTCIceCandidate = window.PluginRTC.RTCIceCandidate;
-    RTCSessionDescription = window.PluginRTC.RTCSessionDescription;
-}
-
-if (typeof window.PluginRTC !== 'undefined') {
-    window.onPluginRTCInitialized();
-}
-
 function PeerInitiator(config) {
+    if (typeof window.RTCPeerConnection !== 'undefined') {
+        RTCPeerConnection = window.RTCPeerConnection;
+    } else if (typeof mozRTCPeerConnection !== 'undefined') {
+        RTCPeerConnection = mozRTCPeerConnection;
+    } else if (typeof webkitRTCPeerConnection !== 'undefined') {
+        RTCPeerConnection = webkitRTCPeerConnection;
+    }
+
+    RTCSessionDescription = window.RTCSessionDescription || window.mozRTCSessionDescription;
+    RTCIceCandidate = window.RTCIceCandidate || window.mozRTCIceCandidate;
+    MediaStreamTrack = window.MediaStreamTrack;
+
     if (!RTCPeerConnection) {
         throw 'WebRTC 1.0 (RTCPeerConnection) API are NOT available in this browser.';
     }
@@ -63,6 +67,14 @@ function PeerInitiator(config) {
     this.streams = [];
     this.channels = config.channels || [];
     this.connectionDescription = config.connectionDescription;
+
+    this.addStream = function(session) {
+        connection.addStream(session, self.userid);
+    };
+
+    this.removeStream = function(streamid) {
+        connection.removeStream(streamid, self.userid);
+    };
 
     var self = this;
 
@@ -92,12 +104,69 @@ function PeerInitiator(config) {
     });
 
     if (!renegotiatingPeer) {
-        peer = new RTCPeerConnection(navigator.onLine ? {
-            iceServers: connection.iceServers,
-            iceTransports: 'all'
-        } : null, window.PluginRTC ? null : connection.optionalArgument);
+        var iceTransports = 'all';
+        if (connection.candidates.turn || connection.candidates.relay) {
+            if (!connection.candidates.stun && !connection.candidates.reflexive && !connection.candidates.host) {
+                iceTransports = 'relay';
+            }
+        }
+
+        try {
+            var params = {};
+
+            if (DetectRTC.browser.name !== 'Chrome') {
+                params.iceServers = connection.iceServers;
+            }
+
+            if (DetectRTC.browser.name === 'Chrome') {
+                params = {
+                    iceServers: connection.iceServers,
+                    iceTransportPolicy: connection.iceTransportPolicy || iceTransports,
+                    // rtcpMuxPolicy: connection.rtcpMuxPolicy || 'require', // or negotiate
+                    // bundlePolicy: 'max-bundle',
+                    // iceCandidatePoolSize: connection.iceCandidatePoolSize || 0
+                };
+            }
+
+            if (!connection.iceServers.length) {
+                params = null;
+                connection.optionalArgument = null;
+            }
+
+            peer = new RTCPeerConnection(params, connection.optionalArgument);
+        } catch (e) {
+            try {
+                var params = {
+                    iceServers: connection.iceServers
+                };
+
+                peer = new RTCPeerConnection(params);
+            } catch (e) {
+                peer = new RTCPeerConnection();
+            }
+        }
     } else {
         peer = config.peerRef;
+    }
+
+    if (!peer.getRemoteStreams && peer.getReceivers) {
+        peer.getRemoteStreams = function() {
+            var stream = new MediaStream();
+            peer.getReceivers().forEach(function(receiver) {
+                stream.addTrack(receiver.track);
+            });
+            return [stream];
+        };
+    }
+
+    if (!peer.getLocalStreams && peer.getSenders) {
+        peer.getLocalStreams = function() {
+            var stream = new MediaStream();
+            peer.getSenders().forEach(function(sender) {
+                stream.addTrack(sender.track);
+            });
+            return [stream];
+        };
     }
 
     peer.onicecandidate = function(event) {
@@ -112,8 +181,7 @@ function PeerInitiator(config) {
                     connectionDescription: self.connectionDescription,
                     dontGetRemoteStream: !!config.dontGetRemoteStream,
                     extra: connection ? connection.extra : {},
-                    streamsToShare: streamsToShare,
-                    isFirefoxOffered: isFirefox
+                    streamsToShare: streamsToShare
                 });
             }
             return;
@@ -127,11 +195,6 @@ function PeerInitiator(config) {
         });
     };
 
-    var isFirefoxOffered = !isFirefox;
-    if (config.remoteSdp && config.remoteSdp.remotePeerSdpConstraints && config.remoteSdp.remotePeerSdpConstraints.isFirefoxOffered) {
-        isFirefoxOffered = true;
-    }
-
     localStreams.forEach(function(localStream) {
         if (config.remoteSdp && config.remoteSdp.remotePeerSdpConstraints && config.remoteSdp.remotePeerSdpConstraints.dontGetRemoteStream) {
             return;
@@ -141,18 +204,34 @@ function PeerInitiator(config) {
             return;
         }
 
-        localStream = connection.beforeAddingStream(localStream);
+        localStream = connection.beforeAddingStream(localStream, self);
 
         if (!localStream) return;
 
         peer.getLocalStreams().forEach(function(stream) {
-            if (stream.id == localStream.id) {
+            if (localStream && stream.id == localStream.id) {
                 localStream = null;
             }
         });
 
-        if (localStream) {
+        if (localStream && typeof peer.addTrack === 'function') {
+            localStream.getTracks().forEach(function(track) {
+                try {
+                    peer.addTrack(track, localStream);
+                } catch (e) {}
+            });
+        } else if (localStream && typeof peer.addStream === 'function') {
             peer.addStream(localStream);
+        } else {
+            try {
+                peer.addStream(localStream);
+            } catch (e) {
+                localStream && localStream.getTracks().forEach(function(track) {
+                    try {
+                        peer.addTrack(track, localStream);
+                    } catch (e) {}
+                });
+            }
         }
     });
 
@@ -173,6 +252,18 @@ function PeerInitiator(config) {
             extra: extra,
             userid: self.userid
         });
+
+        if (peer && peer.iceConnectionState && peer.iceConnectionState.search(/closed|failed/gi) !== -1 && self.streams instanceof Array) {
+            self.streams.forEach(function(stream) {
+                var streamEvent = connection.streamEvents[stream.id] || {
+                    streamid: stream.id,
+                    stream: stream,
+                    type: 'remote'
+                };
+
+                connection.onstreamended(streamEvent);
+            });
+        }
     };
 
     var sdpConstraints = {
@@ -184,7 +275,25 @@ function PeerInitiator(config) {
 
     defaults.sdpConstraints = setSdpConstraints(sdpConstraints);
 
-    peer.onaddstream = function(event) {
+    var streamObject;
+    var dontDuplicate = {};
+
+    var incomingStreamEvent = 'track';
+
+    if (!window.enableAdapter) {
+        incomingStreamEvent = 'addstream';
+    }
+
+    peer.addEventListener(incomingStreamEvent, function(event) {
+        if (!event) return;
+
+        if (incomingStreamEvent === 'track') {
+            event.stream = event.streams[event.streams.length - 1];
+        }
+
+        if (dontDuplicate[event.stream.id] && DetectRTC.browser.name !== 'Safari') return;
+        dontDuplicate[event.stream.id] = event.stream.id;
+
         var streamsToShare = {};
         if (config.remoteSdp && config.remoteSdp.streamsToShare) {
             streamsToShare = config.remoteSdp.streamsToShare;
@@ -197,20 +306,29 @@ function PeerInitiator(config) {
             event.stream.isAudio = streamToShare.isAudio;
             event.stream.isVideo = streamToShare.isVideo;
             event.stream.isScreen = streamToShare.isScreen;
+        } else {
+            event.stream.isVideo = !!event.stream.getVideoTracks().length;
+            event.stream.isAudio = !event.stream.isVideo;
+            event.stream.isScreen = false;
         }
+
         event.stream.streamid = event.stream.id;
-        if (!event.stream.stop) {
+        if (DetectRTC.browser.name == 'Firefox' || !event.stream.stop) {
             event.stream.stop = function() {
-                if (isFirefox) {
-                    fireEvent(this, 'ended');
+                var streamEndedEvent = 'ended';
+
+                if ('oninactive' in event.stream) {
+                    streamEndedEvent = 'inactive';
                 }
+                fireEvent(event.stream, streamEndedEvent);
             };
         }
         allRemoteStreams[event.stream.id] = event.stream;
         config.onRemoteStream(event.stream);
-    };
+    }, false);
 
     peer.onremovestream = function(event) {
+        // this event doesn't works anymore
         event.stream.streamid = event.stream.id;
 
         if (allRemoteStreams[event.stream.id]) {
@@ -224,12 +342,37 @@ function PeerInitiator(config) {
         peer.addIceCandidate(new RTCIceCandidate(remoteCandidate));
     };
 
-    this.addRemoteSdp = function(remoteSdp, cb) {
-        remoteSdp.sdp = connection.processSdp(remoteSdp.sdp);
-        peer.setRemoteDescription(new RTCSessionDescription(remoteSdp), cb || function() {}, function(error) {
+    function oldAddRemoteSdp(remoteSdp, cb) {
+        cb = cb || function() {};
+
+        if (DetectRTC.browser.name !== 'Safari') {
+            remoteSdp.sdp = connection.processSdp(remoteSdp.sdp);
+        }
+        peer.setRemoteDescription(new RTCSessionDescription(remoteSdp), cb, function(error) {
             if (!!connection.enableLogs) {
-                console.error(JSON.stringify(error, null, '\t'), '\n', remoteSdp.type, remoteSdp.sdp);
+                console.error('setRemoteDescription failed', '\n', error, '\n', remoteSdp.sdp);
             }
+
+            cb();
+        });
+    }
+
+    this.addRemoteSdp = function(remoteSdp, cb) {
+        cb = cb || function() {};
+
+        if (!window.enableAdapter) {
+            return oldAddRemoteSdp(remoteSdp, cb);
+        }
+
+        if (DetectRTC.browser.name !== 'Safari') {
+            remoteSdp.sdp = connection.processSdp(remoteSdp.sdp);
+        }
+        peer.setRemoteDescription(new RTCSessionDescription(remoteSdp)).then(cb, function(error) {
+            if (!!connection.enableLogs) {
+                console.error('setRemoteDescription failed', '\n', error, '\n', remoteSdp.sdp);
+            }
+
+            cb();
         });
     };
 
@@ -255,12 +398,30 @@ function PeerInitiator(config) {
         }
     }
 
+    this.enableDisableVideoEncoding = function(enable) {
+        var rtcp;
+        peer.getSenders().forEach(function(sender) {
+            if (!rtcp && sender.track.kind === 'video') {
+                rtcp = sender;
+            }
+        });
+
+        if (!rtcp || !rtcp.getParameters) return;
+
+        var parameters = rtcp.getParameters();
+        parameters.encodings[1] && (parameters.encodings[1].active = !!enable);
+        parameters.encodings[2] && (parameters.encodings[2].active = !!enable);
+        rtcp.setParameters(parameters);
+    };
+
     if (config.remoteSdp) {
         if (config.remoteSdp.remotePeerSdpConstraints) {
             sdpConstraints = config.remoteSdp.remotePeerSdpConstraints;
         }
         defaults.sdpConstraints = setSdpConstraints(sdpConstraints);
-        this.addRemoteSdp(config.remoteSdp);
+        this.addRemoteSdp(config.remoteSdp, function() {
+            createOfferOrAnswer('createAnswer');
+        });
     }
 
     function setChannelEvents(channel) {
@@ -311,27 +472,76 @@ function PeerInitiator(config) {
         };
     });
 
-    peer[isOfferer ? 'createOffer' : 'createAnswer'](function(localSdp) {
-        localSdp.sdp = connection.processSdp(localSdp.sdp);
-        peer.setLocalDescription(localSdp);
+    function oldCreateOfferOrAnswer(_method) {
+        peer[_method](function(localSdp) {
+            if (DetectRTC.browser.name !== 'Safari') {
+                localSdp.sdp = connection.processSdp(localSdp.sdp);
+            }
+            peer.setLocalDescription(localSdp, function() {
+                if (!connection.trickleIce) return;
 
-        if (!connection.trickleIce) return;
-        config.onLocalSdp({
-            type: localSdp.type,
-            sdp: localSdp.sdp,
-            remotePeerSdpConstraints: config.remotePeerSdpConstraints || false,
-            renegotiatingPeer: !!config.renegotiatingPeer || false,
-            connectionDescription: self.connectionDescription,
-            dontGetRemoteStream: !!config.dontGetRemoteStream,
-            extra: connection ? connection.extra : {},
-            streamsToShare: streamsToShare,
-            isFirefoxOffered: isFirefox
-        });
-    }, function(error) {
-        if (!!connection.enableLogs) {
-            console.error('sdp-error', error);
+                config.onLocalSdp({
+                    type: localSdp.type,
+                    sdp: localSdp.sdp,
+                    remotePeerSdpConstraints: config.remotePeerSdpConstraints || false,
+                    renegotiatingPeer: !!config.renegotiatingPeer || false,
+                    connectionDescription: self.connectionDescription,
+                    dontGetRemoteStream: !!config.dontGetRemoteStream,
+                    extra: connection ? connection.extra : {},
+                    streamsToShare: streamsToShare
+                });
+
+                connection.onSettingLocalDescription(self);
+            }, function(error) {
+                if (!!connection.enableLogs) {
+                    console.error('setLocalDescription-error', error);
+                }
+            });
+        }, function(error) {
+            if (!!connection.enableLogs) {
+                console.error('sdp-' + _method + '-error', error);
+            }
+        }, defaults.sdpConstraints);
+    }
+
+    function createOfferOrAnswer(_method) {
+        if (!window.enableAdapter) {
+            return oldCreateOfferOrAnswer(_method);
         }
-    }, defaults.sdpConstraints);
+
+        peer[_method](defaults.sdpConstraints).then(function(localSdp) {
+            if (DetectRTC.browser.name !== 'Safari') {
+                localSdp.sdp = connection.processSdp(localSdp.sdp);
+            }
+            peer.setLocalDescription(localSdp).then(function() {
+                if (!connection.trickleIce) return;
+
+                config.onLocalSdp({
+                    type: localSdp.type,
+                    sdp: localSdp.sdp,
+                    remotePeerSdpConstraints: config.remotePeerSdpConstraints || false,
+                    renegotiatingPeer: !!config.renegotiatingPeer || false,
+                    connectionDescription: self.connectionDescription,
+                    dontGetRemoteStream: !!config.dontGetRemoteStream,
+                    extra: connection ? connection.extra : {},
+                    streamsToShare: streamsToShare
+                });
+
+                connection.onSettingLocalDescription(self);
+            }, function(error) {
+                if (!connection.enableLogs) return;
+                console.error('setLocalDescription error', error);
+            });
+        }, function(error) {
+            if (!!connection.enableLogs) {
+                console.error('sdp-error', error);
+            }
+        });
+    }
+
+    if (isOfferer) {
+        createOfferOrAnswer('createOffer');
+    }
 
     peer.nativeClose = peer.close;
     peer.close = function() {
@@ -340,12 +550,9 @@ function PeerInitiator(config) {
         }
 
         try {
-            if (peer.iceConnectionState.search(/closed|failed/gi) === -1) {
-                peer.getRemoteStreams().forEach(function(stream) {
-                    stream.stop();
-                });
+            if (peer.nativeClose !== peer.close) {
+                peer.nativeClose();
             }
-            peer.nativeClose();
         } catch (e) {}
 
         peer = null;

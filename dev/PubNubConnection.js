@@ -1,4 +1,8 @@
 function PubNubConnection(connection, connectCallback) {
+    function isData(session) {
+        return !session.audio && !session.video && !session.screen && session.data;
+    }
+
     var channelId = connection.channel;
 
     var pub = 'pub-c-3c0fc243-9892-4858-aa38-1445e58b4ecb';
@@ -50,6 +54,7 @@ function PubNubConnection(connection, connectCallback) {
     };
 
     connection.socket.emit = function(eventName, data, callback) {
+        if (!data) return;
         if (eventName === 'changed-uuid') return;
         if (data.message && data.message.shiftedModerationControl) return;
 
@@ -68,11 +73,11 @@ function PubNubConnection(connection, connectCallback) {
     function onMessagesCallback(message) {
         if (message.remoteUserId != connection.userid) return;
 
-        if (connection.peers[message.sender] && connection.peers[message.sender].extra != message.extra) {
-            connection.peers[message.sender].extra = message.extra;
+        if (connection.peers[message.sender] && connection.peers[message.sender].extra != message.message.extra) {
+            connection.peers[message.sender].extra = message.message.extra;
             connection.onExtraDataUpdated({
                 userid: message.sender,
-                extra: message.extra
+                extra: message.message.extra
             });
         }
 
@@ -169,7 +174,7 @@ function PubNubConnection(connection, connectCallback) {
             }
 
             var userPreferences = {
-                extra: message.extra || {},
+                extra: message.message.extra || {},
                 localPeerSdpConstraints: message.message.remotePeerSdpConstraints || {
                     OfferToReceiveAudio: connection.sdpConstraints.mandatory.OfferToReceiveAudio,
                     OfferToReceiveVideo: connection.sdpConstraints.mandatory.OfferToReceiveVideo
@@ -225,6 +230,8 @@ function PubNubConnection(connection, connectCallback) {
     }
 
     window.addEventListener('beforeunload', function() {
+        if (!connection.socket || !connection.socket.emit) return;
+
         connection.socket.emit('presence', {
             userid: connection.userid,
             isOnline: false

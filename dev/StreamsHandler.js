@@ -29,8 +29,14 @@ var StreamsHandler = (function() {
         if (!stream || !stream.addEventListener) return;
 
         if (typeof syncAction == 'undefined' || syncAction == true) {
-            stream.addEventListener('ended', function() {
-                StreamsHandler.onSyncNeeded(this.streamid, 'ended');
+            var streamEndedEvent = 'ended';
+
+            if ('oninactive' in stream) {
+                streamEndedEvent = 'inactive';
+            }
+
+            stream.addEventListener(streamEndedEvent, function() {
+                StreamsHandler.onSyncNeeded(this.streamid, streamEndedEvent);
             }, false);
         }
 
@@ -122,7 +128,11 @@ var StreamsHandler = (function() {
             var mediaElement = connection.streamEvents[stream.streamid].mediaElement;
             mediaElement.volume = 0;
             afterEach(200, 5, function() {
-                mediaElement.volume += .20;
+                try {
+                    mediaElement.volume += .20;
+                } catch (e) {
+                    mediaElement.volume = 1;
+                }
             });
         }
     }

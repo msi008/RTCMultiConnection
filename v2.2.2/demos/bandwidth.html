@@ -7,7 +7,14 @@
 <html id="home" lang="en">
 
 <head>
-    <title>Customizing Bandwidth using RTCMultiConnection ® Muaz Khan</title>
+    <script>
+        if(!location.hash.replace('#', '').length) {
+            location.href = location.href.split('#')[0] + '#' + (Math.random() * 100).toString().replace('.', '');
+            location.reload();
+        }
+    </script>
+
+    <title>Customizing Bandwidth using RTCMultiConnection | Muaz Khan</title>
     <meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
@@ -244,35 +251,18 @@
     document.createElement('article');
     document.createElement('footer');
     </script>
-    <script src="//cdn.webrtc-experiment.com/firebase.js">
-    </script>
-    <script src="//cdn.webrtc-experiment.com/RTCMultiConnection.js">
-    </script>
+    <script src="https://cdn.webrtc-experiment.com/socket.io.js"></script>
+    <script src="https://webrtc.github.io/adapter/adapter-latest.js"></script>
+    <script src="https://cdn.webrtc-experiment.com/CodecsHandler.js"></script>
+    <script src="https://cdn.webrtc-experiment.com/IceServersHandler.js"></script>
+    <script src="https://cdn.webrtc-experiment.com/RTCMultiConnection.js"></script>
 </head>
 
 <body>
     <article>
-        <a href="https://www.webrtc-experiment.com/" style="border-bottom: 1px solid #2844FA; font-size: 1.2em; position: absolute; right: 0; text-decoration: none; top: 0;">↑
+        <a href="https://www.webrtc-experiment.com/" style="border-bottom: 1px solid #2844FA; font-size: 1.2em; position: absolute; right: 0; text-decoration: none; top: 0;">↑WEBRTC EXPERIMENTS</a>
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-                WEBRTC EXPERIMENTS</a>
-
-
-        <h1>Customizing Bandwidth using <a href="https://github.com/muaz-khan/RTCMultiConnection" target="_blank">RTCMultiConnection</a>
-        </h1>
+        <h1>Customizing Bandwidth using <a href="https://github.com/muaz-khan/RTCMultiConnection" target="_blank">RTCMultiConnection</a></h1>
 
         <p>
             <span>Copyright ©</span>
@@ -309,6 +299,34 @@
         window.username = Math.random() * 9999 << 9999;
 
         connection = new RTCMultiConnection('bandwidth-customization');
+
+        // https://github.com/muaz-khan/WebRTC-Experiment/tree/master/socketio-over-nodejs
+        var SIGNALING_SERVER = 'https://socketio-over-nodejs2.herokuapp.com:443/';
+        connection.openSignalingChannel = function(config) {
+            var channel = config.channel || connection.channel || 'default-namespace';
+            var sender = Math.round(Math.random() * 9999999999) + 9999999999;
+
+            io.connect(SIGNALING_SERVER).emit('new-channel', {
+                channel: channel,
+                sender: sender
+            });
+
+            var socket = io.connect(SIGNALING_SERVER + channel);
+            socket.channel = channel;
+
+            socket.on('connect', function() {
+                if (config.callback) config.callback(socket);
+            });
+
+            socket.send = function(message) {
+                socket.emit('message', {
+                    sender: sender,
+                    data: message
+                });
+            };
+
+            socket.on('message', config.onmessage);
+        };
 
         connection.bandwidth = {
             audio: params.audio || 50,
@@ -430,8 +448,13 @@
 
         <p>Pass "session-id" only-over the constructor:</p>
         <pre>
-            connection = new RTCMultiConnection('session-id'); connection.bandwidth = { audio: 50, video: 256 }; connection.open();
-        </pre>
+connection = new RTCMultiConnection('session-id'); 
+connection.bandwidth = { 
+    audio: 50, 
+    video: 256 
+}; 
+connection.open();
+</pre>
 
         <br/>
         <br/>
@@ -457,8 +480,8 @@
 
         </p>
     </footer>
-    <script src="//cdn.webrtc-experiment.com/commits.js">
-    </script>
+    <script>window.useThisGithubPath = 'muaz-khan/RTCMultiConnection';</script>
+    <script src="https://cdn.webrtc-experiment.com/commits.js" async></script>
 </body>
 
 </html>

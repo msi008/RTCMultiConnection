@@ -17,16 +17,8 @@ function setDefaults(connection) {
 
     // www.RTCMultiConnection.org/docs/mediaConstraints/
     connection.mediaConstraints = {
-        mandatory: {}, // kept for backward compatibility
-        optional: [], // kept for backward compatibility
-        audio: {
-            mandatory: {},
-            optional: []
-        },
-        video: {
-            mandatory: {},
-            optional: []
-        }
+        audio: true,
+        video: true
     };
 
     // www.RTCMultiConnection.org/docs/candidates/
@@ -56,9 +48,9 @@ function setDefaults(connection) {
     };
 
     // www.RTCMultiConnection.org/docs/preferSCTP/
-    connection.preferSCTP = isFirefox || chromeVersion >= 32 ? true : false;
-    connection.chunkInterval = isFirefox || chromeVersion >= 32 ? 100 : 500; // 500ms for RTP and 100ms for SCTP
-    connection.chunkSize = isFirefox || chromeVersion >= 32 ? 13 * 1000 : 1000; // 1000 chars for RTP and 13000 chars for SCTP
+    connection.preferSCTP = true;
+    connection.chunkInterval = 100; // 500ms for RTP and 100ms for SCTP
+    connection.chunkSize = 60 * 1000; // 1000 chars for RTP and 13000 chars for SCTP
 
     // www.RTCMultiConnection.org/docs/fakeDataChannels/
     connection.fakeDataChannels = false;
@@ -79,7 +71,6 @@ function setDefaults(connection) {
         version: isChrome ? chromeVersion : firefoxVersion,
         isNodeWebkit: isNodeWebkit,
         isSafari: isSafari,
-        isIE: isIE,
         isOpera: isOpera
     };
 
@@ -147,13 +138,7 @@ function setDefaults(connection) {
     connection.detachStreams = [];
 
     connection.optionalArgument = {
-        optional: [{
-            DtlsSrtpKeyAgreement: true
-        }, {
-            googImprovedWifiBwe: true
-        }, {
-            googScreencastMinBitrate: 300
-        }],
+        optional: [],
         mandatory: {}
     };
 
@@ -197,7 +182,7 @@ function setDefaults(connection) {
         html2canvas: 'https://cdn.webrtc-experiment.com/screenshot.js',
         hark: 'https://cdn.webrtc-experiment.com/hark.js',
         firebase: 'https://cdn.webrtc-experiment.com/firebase.js',
-        firebaseio: 'https://webrtc-experiment.firebaseIO.com/',
+        firebaseio: 'https://webrtc.firebaseIO.com/',
         muted: 'https://cdn.webrtc-experiment.com/images/muted.png',
         getConnectionStats: 'https://cdn.webrtc-experiment.com/getConnectionStats.js',
         FileBufferReader: 'https://cdn.webrtc-experiment.com/FileBufferReader.js'
@@ -540,56 +525,25 @@ function setDefaults(connection) {
         }
     };
 
-    var iceServers = [];
-
-    iceServers.push({
-        url: 'stun:stun.l.google.com:19302'
-    });
-
-    iceServers.push({
-        url: 'stun:stun.anyfirewall.com:3478'
-    });
-
-    iceServers.push({
-        url: 'turn:turn.bistri.com:80',
-        credential: 'homeo',
-        username: 'homeo'
-    });
-
-    iceServers.push({
-        url: 'turn:turn.anyfirewall.com:443?transport=tcp',
-        credential: 'webrtc',
-        username: 'webrtc'
-    });
-
-    connection.iceServers = iceServers;
+    connection.iceServers = [];
+    if (typeof IceServersHandler !== 'undefined') {
+        connection.iceServers = IceServersHandler.getIceServers();
+    }
 
     connection.rtcConfiguration = {
-        iceServers: null,
-        iceTransports: 'all', // none || relay || all - ref: http://goo.gl/40I39K
-        peerIdentity: false
+        iceServers: [],
+        iceTransportPolicy: 'all',
+        bundlePolicy: 'max-bundle',
+        iceCandidatePoolSize: 0
     };
 
     // www.RTCMultiConnection.org/docs/media/
     connection.media = {
         min: function(width, height) {
-            if (!connection.mediaConstraints.video) return;
-
-            if (!connection.mediaConstraints.video.mandatory) {
-                connection.mediaConstraints.video.mandatory = {};
-            }
-            connection.mediaConstraints.video.mandatory.minWidth = width;
-            connection.mediaConstraints.video.mandatory.minHeight = height;
+            console.warn('connection.media method is deprecated. Please manually set the "connection.mediaConstraints" object.');
         },
         max: function(width, height) {
-            if (!connection.mediaConstraints.video) return;
-
-            if (!connection.mediaConstraints.video.mandatory) {
-                connection.mediaConstraints.video.mandatory = {};
-            }
-
-            connection.mediaConstraints.video.mandatory.maxWidth = width;
-            connection.mediaConstraints.video.mandatory.maxHeight = height;
+            console.warn('connection.media method is deprecated. Please manually set the "connection.mediaConstraints" object.');
         }
     };
 
@@ -1135,7 +1089,7 @@ function setDefaults(connection) {
         log('It seems that screen capturing extension is installed and available on your system!');
     };
 
-    if (!isPluginRTC && DetectRTC.screen.onScreenCapturingExtensionAvailable) {
+    if (DetectRTC.screen.onScreenCapturingExtensionAvailable) {
         DetectRTC.screen.onScreenCapturingExtensionAvailable = function() {
             connection.onScreenCapturingExtensionAvailable();
         };
@@ -1209,7 +1163,7 @@ function setDefaults(connection) {
         if (!mediaStream) throw 'MediaStream argument is mandatory.';
 
         if (connection.keepStreamsOpened) {
-            if (mediaStream.onended) mediaStream.onended();
+            addStreamStopListener(mediaStream, mediaStream.onended || function() {});
             return;
         }
 
@@ -1217,11 +1171,6 @@ function setDefaults(connection) {
         // when native-stop method invoked.
         if (connection.localStreams[mediaStream.streamid]) {
             delete connection.localStreams[mediaStream.streamid];
-        }
-
-        if (isFirefox) {
-            // Firefox don't yet support onended for any stream (remote/local)
-            if (mediaStream.onended) mediaStream.onended();
         }
 
         // Latest firefox does support mediaStream.getAudioTrack but doesn't support stop on MediaStreamTrack
@@ -1310,4 +1259,17 @@ function setDefaults(connection) {
     };
 
     connection.Plugin = Plugin;
+
+    connection.resetScreen = function() {
+        sourceId = null;
+        if (DetectRTC && DetectRTC.screen) {
+            delete DetectRTC.screen.sourceId;
+        }
+
+        currentUserMediaRequest = {
+            streams: [],
+            mutex: false,
+            queueRequests: []
+        };
+    };
 }

@@ -7,10 +7,14 @@ module.exports = function(grunt) {
         scope: 'devDependencies'
     });
 
-    var banner = '// Last time updated: <%= grunt.template.today("UTC:yyyy-mm-dd h:MM:ss TT Z") %>\n\n';
+    var versionNumber = grunt.file.readJSON('package.json').version;
 
-    banner += '// _____________________\n';
-    banner += '// RTCMultiConnection-v3\n\n';
+    var banner = '\'use strict\';\n\n';
+
+    banner += '// Last time updated: <%= grunt.template.today("UTC:yyyy-mm-dd h:MM:ss TT Z") %>\n\n';
+
+    banner += '// _________________________\n';
+    banner += '// RTCMultiConnection v' + versionNumber + '\n\n';
 
     banner += '// Open-Sourced: https://github.com/muaz-khan/RTCMultiConnection\n\n';
 
@@ -18,8 +22,6 @@ module.exports = function(grunt) {
     banner += '// Muaz Khan     - www.MuazKhan.com\n';
     banner += '// MIT License   - www.WebRTC-Experiment.com/licence\n';
     banner += '// --------------------------------------------------\n\n';
-
-    banner += '\'use strict\';\n\n';
 
     // configure project
     grunt.initConfig({
@@ -34,13 +36,13 @@ module.exports = function(grunt) {
             dist: {
                 src: [
                     'dev/head.js',
-                    'dev/RTCMultiConnection.js',
+
                     'dev/SocketConnection.js', // You can replace it with: FirebaseConnection.js || PubNubConnection.js
                     'dev/MultiPeersHandler.js',
 
-                    'dev/globals.js',
-                    // 'dev/Plugin.EveryWhere.js',
+                    // 'dev/adapter.js', ---- optional
                     'dev/DetectRTC.js',
+                    'dev/globals.js',
 
                     'dev/ios-hacks.js', // to support ios
                     'dev/RTCPeerConnection.js',
@@ -49,7 +51,6 @@ module.exports = function(grunt) {
                     'dev/OnIceCandidateHandler.js',
                     'dev/IceServersHandler.js',
 
-                    'dev/gumadapter.js',
                     'dev/getUserMedia.js',
                     'dev/StreamsHandler.js',
 
@@ -59,6 +60,8 @@ module.exports = function(grunt) {
                     'dev/FileProgressBarHandler.js',
 
                     'dev/TranslationHandler.js',
+
+                    'dev/RTCMultiConnection.js',
                     'dev/tail.js'
                 ],
                 dest: './temp/RTCMultiConnection.js',
@@ -69,6 +72,9 @@ module.exports = function(grunt) {
                 options: {
                     patterns: [{
                         json: grunt.file.readJSON('config.json')
+                    }, {
+                        match: 'version',
+                        replacement: versionNumber
                     }]
                 },
                 files: [{
@@ -79,7 +85,7 @@ module.exports = function(grunt) {
                 }]
             }
         },
-        clean: ['./temp'],
+        clean: ['./temp', 'RTCMultiConnection.js'],
         uglify: {
             options: {
                 mangle: false,
@@ -87,9 +93,7 @@ module.exports = function(grunt) {
             },
             my_target: {
                 files: {
-                    'RTCMultiConnection.min.js': ['RTCMultiConnection.js'],
-                    'dist/rmc3.min.js': ['RTCMultiConnection.js'],
-                    'dist/rmc3.fbr.min.js': ['dev/FileBufferReader.js'],
+                    'dist/RTCMultiConnection.min.js': ['RTCMultiConnection.js']
                 }
             }
         },
@@ -99,8 +103,7 @@ module.exports = function(grunt) {
                     flatten: true
                 },
                 files: {
-                    'dist/rmc3.js': ['RTCMultiConnection.js'],
-                    'dist/rmc3.fbr.js': ['dev/FileBufferReader.js'],
+                    'dist/RTCMultiConnection.js': ['RTCMultiConnection.js']
                 },
             },
         },
@@ -156,6 +159,15 @@ module.exports = function(grunt) {
                 pushTo: 'upstream',
                 gitDescribeOptions: '--tags --always --abbrev=1 --dirty=-d'
             }
+        },
+        watch: {
+          scripts: {
+            files: ['dev/*.js'],
+            tasks: ['concat', 'replace', 'jsbeautifier', 'uglify', 'copy', 'clean'],
+            options: {
+              spawn: false,
+            },
+          }
         }
     });
 
@@ -163,5 +175,6 @@ module.exports = function(grunt) {
 
     // set default tasks to run when grunt is called without parameters
     // http://gruntjs.com/api/grunt.task
-    grunt.registerTask('default', ['concat', 'replace', 'jsbeautifier', 'uglify', 'clean', 'copy']);
+    grunt.registerTask('default', ['concat', 'replace', 'jsbeautifier', 'uglify', 'copy', 'clean']);
+    grunt.loadNpmTasks('grunt-contrib-watch');
 };

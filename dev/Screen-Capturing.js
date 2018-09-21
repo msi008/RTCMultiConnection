@@ -1,4 +1,4 @@
-// Last time updated at March 30, 2016, 08:32:23
+// Last time updated on: 5th May 2018
 
 // Latest file can be found here: https://cdn.webrtc-experiment.com/Screen-Capturing.js
 
@@ -21,14 +21,26 @@ window.addEventListener('message', function(event) {
     onMessageCallback(event.data);
 });
 
+// via: https://bugs.chromium.org/p/chromium/issues/detail?id=487935#c17
+// you can capture screen on Android Chrome >= 55 with flag: "Experimental ScreenCapture android"
+window.IsAndroidChrome = false;
+try {
+    if (navigator.userAgent.toLowerCase().indexOf("android") > -1 && /Chrome/.test(navigator.userAgent) && /Google Inc/.test(navigator.vendor)) {
+        window.IsAndroidChrome = true;
+    }
+} catch (e) {}
+
 // and the function that handles received messages
 
 function onMessageCallback(data) {
     // "cancel" button is clicked
     if (data == 'PermissionDeniedError') {
         chromeMediaSource = 'PermissionDeniedError';
-        if (screenCallback) return screenCallback('PermissionDeniedError');
-        else throw new Error('PermissionDeniedError');
+        if (screenCallback) {
+            return screenCallback('PermissionDeniedError');
+        } else {
+            throw new Error('PermissionDeniedError: User rejected to share his screen.');
+        }
     }
 
     // extension notified his presence
@@ -38,7 +50,8 @@ function onMessageCallback(data) {
 
     // extension shared temp sourceId
     if (data.sourceId && screenCallback) {
-        screenCallback(sourceId = data.sourceId);
+        sourceId = data.sourceId;
+        screenCallback(sourceId);
     }
 }
 
@@ -51,9 +64,18 @@ var screenCallback;
 function isChromeExtensionAvailable(callback) {
     if (!callback) return;
 
-    if (isFirefox) return isFirefoxExtensionAvailable(callback);
+    if (DetectRTC.browser.name === 'Firefox') return isFirefoxExtensionAvailable(callback);
 
-    if (chromeMediaSource == 'desktop') return callback(true);
+    if (window.IsAndroidChrome) {
+        chromeMediaSource = 'screen';
+        callback(true);
+        return;
+    }
+
+    if (chromeMediaSource == 'desktop') {
+        callback(true);
+        return;
+    }
 
     // ask extension if it is available
     window.postMessage('are-you-there', '*');
@@ -68,7 +90,7 @@ function isChromeExtensionAvailable(callback) {
 function isFirefoxExtensionAvailable(callback) {
     if (!callback) return;
 
-    if (!isFirefox) return isChromeExtensionAvailable(callback);
+    if (DetectRTC.browser.name !== 'Firefox') return isChromeExtensionAvailable(callback);
 
     var isFirefoxAddonResponded = false;
 
@@ -105,11 +127,8 @@ function isFirefoxExtensionAvailable(callback) {
 // this function can be used to get "source-id" from the extension
 function getSourceId(callback, audioPlusTab) {
     if (!callback) throw '"callback" parameter is mandatory.';
-    if (sourceId) {
-        callback(sourceId);
-        sourceId = null;
-        return;
-    }
+
+    sourceId = null;
 
     screenCallback = callback;
 
@@ -121,21 +140,29 @@ function getSourceId(callback, audioPlusTab) {
 }
 
 function getChromeExtensionStatus(extensionid, callback) {
+    if (window.IsAndroidChrome) {
+        chromeMediaSource = 'screen';
+        callback('installed-enabled');
+        return;
+    }
+
     if (arguments.length != 2) {
         callback = extensionid;
         extensionid = window.RMCExtensionID || 'ajhifddimkapgcifgcodmmfdlknahffk'; // default extension-id
     }
 
-    if (isFirefox) return callback('not-chrome');
+    if (DetectRTC.browser.name === 'Firefox') return callback('not-chrome');
+
+    sourceId = null;
+    chromeMediaSource = 'screen';
 
     var image = document.createElement('img');
     image.src = 'chrome-extension://' + extensionid + '/icon.png';
     image.onload = function() {
-        chromeMediaSource = 'screen';
         window.postMessage('are-you-there', '*');
         setTimeout(function() {
             if (chromeMediaSource == 'screen') {
-                callback(extensionid == extensionid ? 'installed-enabled' : 'installed-disabled');
+                callback('installed-disabled');
             } else callback('installed-enabled');
         }, 2000);
     };
@@ -144,16 +171,25 @@ function getChromeExtensionStatus(extensionid, callback) {
     };
 }
 
+function getAspectRatio(w, h) {
+    function gcd(a, b) {
+        return (b == 0) ? a : gcd(b, a % b);
+    }
+    var r = gcd(w, h);
+    return (w / r) / (h / r);
+}
+
 // this function explains how to use above methods/objects
 function getScreenConstraints(callback, audioPlusTab) {
     var firefoxScreenConstraints = {
         mozMediaSource: 'window',
-        mediaSource: 'window',
-        width: 29999,
-        height: 8640
+        mediaSource: 'window'
     };
 
-    if (isFirefox) return callback(null, firefoxScreenConstraints);
+    if (DetectRTC.browser.name === 'Firefox') return callback(null, firefoxScreenConstraints);
+
+    // support recapture again & again
+    sourceId = null;
 
     isChromeExtensionAvailable(function(isAvailable) {
         // this statement defines getUserMedia constraints
@@ -161,14 +197,23 @@ function getScreenConstraints(callback, audioPlusTab) {
         var screen_constraints = {
             mandatory: {
                 chromeMediaSource: chromeMediaSource,
-                maxWidth: 29999,
-                maxHeight: 8640,
-                minFrameRate: 30,
-                maxFrameRate: 128,
-                minAspectRatio: 1.77 // 2.39
+                maxWidth: screen.width,
+                maxHeight: screen.height,
+                minWidth: screen.width,
+                minHeight: screen.height,
+                minAspectRatio: getAspectRatio(screen.width, screen.height),
+                maxAspectRatio: getAspectRatio(screen.width, screen.height),
+                minFrameRate: 64,
+                maxFrameRate: 128
             },
             optional: []
         };
+
+        if (window.IsAndroidChrome) {
+            // now invoking native getUserMedia API
+            callback(null, screen_constraints);
+            return;
+        }
 
         // this statement verifies chrome extension availability
         // if installed and available then it will invoke extension API
@@ -182,10 +227,14 @@ function getScreenConstraints(callback, audioPlusTab) {
             return;
         }
 
-        // this statement sets gets 'sourceId" and sets "chromeMediaSourceId" 
+        // this statement sets gets 'sourceId" and sets "chromeMediaSourceId"
         if (chromeMediaSource == 'desktop') {
             screen_constraints.mandatory.chromeMediaSourceId = sourceId;
         }
+
+        sourceId = null;
+        // chromeMediaSource = 'screen'; // maybe this line is redundant?
+        screenCallback = null;
 
         // now invoking native getUserMedia API
         callback(null, screen_constraints);

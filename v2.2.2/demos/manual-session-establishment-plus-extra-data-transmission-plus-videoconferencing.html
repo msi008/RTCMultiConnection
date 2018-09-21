@@ -7,7 +7,14 @@
 <html id="home" lang="en">
 
 <head>
-    <title>Manual session establishment + extra data transmission + video conferencing using RTCMultiConnection + video conferencing ® Muaz Khan</title>
+    <script>
+        if(!location.hash.replace('#', '').length) {
+            location.href = location.href.split('#')[0] + '#' + (Math.random() * 100).toString().replace('.', '');
+            location.reload();
+        }
+    </script>
+
+    <title>Manual session establishment + extra data transmission + video conferencing using RTCMultiConnection + video conferencing | Muaz Khan</title>
     <meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
@@ -212,37 +219,22 @@
     document.createElement('footer');
     </script>
 
-    <script src="//cdn.webrtc-experiment.com/firebase.js">
-    </script>
-    <script src="//cdn.webrtc-experiment.com/RTCMultiConnection-v1.2.js">
-    </script>
+    <script src="https://cdn.webrtc-experiment.com/socket.io.js"></script>
+    <script src="https://webrtc.github.io/adapter/adapter-latest.js"></script>
+    <script src="https://cdn.webrtc-experiment.com/CodecsHandler.js"></script>
+    <script src="https://cdn.webrtc-experiment.com/IceServersHandler.js"></script>
+    <script src="https://cdn.webrtc-experiment.com/RTCMultiConnection.js"></script>
 </head>
 
 <body>
     <article>
-        <a href="https://www.webrtc-experiment.com/" style="border-bottom: 1px solid #2844FA; font-size: 1.2em; position: absolute; right: 0; text-decoration: none; top: 0;">↑
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-                WEBRTC EXPERIMENTS</a>
+        <a href="https://www.webrtc-experiment.com/" style="border-bottom: 1px solid #2844FA; font-size: 1.2em; position: absolute; right: 0; text-decoration: none; top: 0;">↑ WEBRTC EXPERIMENTS</a>
 
 
         <h1>Manual session establishment + extra data transmission + video conferencing</h1>
 
         <p>
-            <span>Copyright © 2013</span>
+            <span>Copyright © </span>
             <a href="https://github.com/muaz-khan" target="_blank">Muaz Khan</a>
             <span>&lt;</span><a href="http://twitter.com/muazkh" target="_blank">@muazkh</a>
             <span>&gt;.</span>
@@ -250,6 +242,14 @@
         <section class="plusone-gplus">
             <div class="g-plusone" data-href="https://www.webrtc-experiment.com/"></div>
         </section>
+
+        <blockquote style="background: #f3b7b7;border: 5px solid black;border-radius: 5px; padding: 10px;">
+            This demo is <span style="border: 1px dotted red; background: yellow; padding: 2px 5px;">out-dated i.e. deprecated (written in 2013)</span>.
+
+            <br><br>
+            Please try other demos: <a href="https://github.com/muaz-khan/RTCMultiConnection">https://github.com/muaz-khan/RTCMultiConnection</a>
+        </blockquote>
+
         <section>
             <h2>New Session:</h2>
             <button id="start-new-session">Start New Video Session</button>
@@ -275,6 +275,35 @@
         //window.username = Math.random() * 9999 << 9999;
 
         var connection = new RTCMultiConnection('session-id-0123456789');
+
+        // https://github.com/muaz-khan/WebRTC-Experiment/tree/master/socketio-over-nodejs
+        var SIGNALING_SERVER = 'https://socketio-over-nodejs2.herokuapp.com:443/';
+        connection.openSignalingChannel = function(config) {
+            var channel = config.channel || connection.channel || 'default-namespace';
+            var sender = Math.round(Math.random() * 9999999999) + 9999999999;
+
+            io.connect(SIGNALING_SERVER).emit('new-channel', {
+                channel: channel,
+                sender: sender
+            });
+
+            var socket = io.connect(SIGNALING_SERVER + channel);
+            socket.channel = channel;
+
+            socket.on('connect', function() {
+                if (config.callback) config.callback(socket);
+            });
+
+            socket.send = function(message) {
+                socket.emit('message', {
+                    sender: sender,
+                    data: message
+                });
+            };
+
+            socket.on('message', config.onmessage);
+        };
+
         var sessionsList = document.getElementById('sessions-list');
         connection.onNewSession = function(session) {
             var alreadyExists = document.getElementById(session.userid);
@@ -417,8 +446,8 @@
             <a href="https://github.com/muaz-khan" target="_blank">Github</a>
         </p>
     </footer>
-    <script src="//cdn.webrtc-experiment.com/commits.js">
-    </script>
+    <script>window.useThisGithubPath = 'muaz-khan/RTCMultiConnection';</script>
+    <script src="https://cdn.webrtc-experiment.com/commits.js" async></script>
 </body>
 
 </html>
